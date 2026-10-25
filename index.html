@@ -566,6 +566,19 @@
                 </button>
             </div>
 
+            <!-- Custom Firebase Config (For Standalone Self-Hosting) -->
+            <details class="group bg-slate-100/70 dark:bg-slate-800/40 rounded-2xl p-3.5 border border-slate-200 dark:border-slate-800">
+                <summary class="text-xs font-bold cursor-pointer flex items-center justify-between text-slate-600 dark:text-slate-300">
+                    <span>☁️ Advanced: Custom Config (Optional)</span>
+                    <i data-lucide="chevron-down" class="w-4 h-4 transition group-open:rotate-180"></i>
+                </summary>
+                <div class="mt-3 space-y-2 text-xs text-slate-500 dark:text-slate-400">
+                    <p>Connected to Supabase project: <code>ikdcgfomdvoibfdaovhh</code></p>
+                    <textarea id="customFirebaseJson" rows="2" placeholder="Optional override..." 
+                        class="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono text-[11px]"></textarea>
+                </div>
+            </details>
+
             <div class="pt-2 flex gap-2">
                 <button onclick="saveSettings()" class="w-full py-3.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-sm shadow-lg shadow-sky-600/20 transition">
                     Save Changes
@@ -622,14 +635,7 @@
     </div>
 
     <!-- ======================== APPLICATION & SUPABASE SYNC LOGIC ======================== -->
-    <script>
-        // ---------------- SUPABASE CREDENTIALS ----------------
-        const SUPABASE_URL = 'https://ikdcgfomdvoibfdaovhh.supabase.co';
-        const SUPABASE_ANON_KEY = 'sb_publishable_MlbKadfbgocgRxUgOgpPXw_Dcg01suS';
-
-        let supabaseClient = null;
-        let realtimeChannel = null;
-
+    <script type="module">
         // ---------------- STATE MANAGEMENT ----------------
         // Partner 1 = Amy (Blue), Partner 2 = Tom (Red/Rose)
         const state = {
@@ -831,6 +837,17 @@
         }
 
         // ---------------- SUPABASE CLOUD SYNC ----------------
+        const SUPABASE_URL = 'https://ikdcgfomdvoibfdaovhh.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable_MlbKadfbgocgRxUgOgpPXw_Dcg01suS';
+
+        let supabaseClient = null;
+        let realtimeChannel = null;
+        let db = true;
+        let currentUser = true;
+        let unsubscribeEvents = null;
+        let unsubscribeTasks = null;
+        let unsubscribeShopping = null;
+
         async function initCloudSync() {
             if (!state.unlocked) return;
 
@@ -858,7 +875,6 @@
 
             const rowId = state.roomKey || 'homestead-amy-tom';
 
-            // 1. Initial Fetch from Supabase
             const { data, error } = await supabaseClient
                 .from('homestead_data')
                 .select('*')
@@ -869,13 +885,11 @@
                 applyIncomingCloudPayload(data.payload, false);
                 state.initialLoadComplete = true;
             } else if (!error && !data) {
-                // First time ever using this Household Key: seed cloud with current/starter state
                 ensureStarterDataIfEmpty();
                 state.initialLoadComplete = true;
                 await pushFullStateToSupabase();
             }
 
-            // 2. Subscribe to Realtime Postgres Changes
             if (realtimeChannel) {
                 supabaseClient.removeChannel(realtimeChannel);
             }
@@ -884,14 +898,237 @@
                 .channel('homestead_sync_' + rowId)
                 .on(
                     'postgres_changes',
-                    { event: '*', schema: 'public', table: 'homestead_data', filter: `id=eq.${rowId}` }, (payload) => { if (payload.new && payload.new.payload) { applyIncomingCloudPayload(payload.new.payload, true); } } ) .subscribe(); }  function applyIncomingCloudPayload(cloudPayload, showNotifications) { const incomingEvents = Array.isArray(cloudPayload.events) ? cloudPayload.events : []; const incomingTasks = Array.isArray(cloudPayload.tasks) ? cloudPayload.tasks : []; const incomingShopping = Array.isArray(cloudPayload.shopping) ? cloudPayload.shopping : [];  if (showNotifications && state.initialLoadComplete) { if (incomingEvents.length > state.events.length) { const newest = [...incomingEvents].sort((a,b) => (b.createdAt\vert{}\vert{}0) - (a.createdAt\vert{}\vert{}0))[0]; if (newest && newest.createdBy !== state.activePartner) { const creatorName = newest.createdBy === 'p1' ? state.p1Name : state.p2Name; showToast(`📅 ${creatorName} added "${newest.title}"`); } } if (incomingTasks.length > state.tasks.length) { const newest = [...incomingTasks].sort((a,b) => (b.createdAt\vert{}\vert{}0) - (a.createdAt\vert{}\vert{}0))[0]; if (newest && newest.createdBy !== state.activePartner) { const creatorName = newest.createdBy === 'p1' ? state.p1Name : state.p2Name; if (newest.assignedTo === state.activePartner \vert{}\vert{} newest.assignedTo === 'both') { showToast(`🔔 ${creatorName} assigned you: "${newest.title}"`); } } } }  state.events = incomingEvents; state.tasks = incomingTasks; state.shopping = incomingShopping; saveDevicePrefs(); renderAll(); }  async function pushFullStateToSupabase() { if (!supabaseClient \vert{}\vert{} !state.unlocked) return; const rowId = state.roomKey \vert{}\vert{} 'homestead-amy-tom'; try { await supabaseClient .from('homestead_data') .upsert({ id: rowId, payload: { events: state.events, tasks: state.tasks, shopping: state.shopping }, updated_at: new Date().toISOString() }); } catch (e) { console.error('Supabase sync error:', e); } }  // Background 4-second poll backup so both phones stay synced even if Realtime isn't toggled on in Supabase setInterval(async () => { if (!supabaseClient \vert{}\vert{} !state.unlocked \vert{}\vert{} state.animatingShoppingIds.size > 0) return; const rowId = state.roomKey \vert{}\vert{} 'homestead-amy-tom'; try { const { data } = await supabaseClient .from('homestead_data') .select('payload') .eq('id', rowId) .maybeSingle(); if (data && data.payload) { const currentJson = JSON.stringify({ events: state.events, tasks: state.tasks, shopping: state.shopping }); const remoteJson = JSON.stringify({ events: data.payload.events \vert{}\vert{} [], tasks: data.payload.tasks \vert{}\vert{} [], shopping: data.payload.shopping \vert{}\vert{} [] }); if (currentJson !== remoteJson) { applyIncomingCloudPayload(data.payload, true); } } } catch (e) {} }, 4000);  async function saveEventToCloud(eventObj) { eventObj.roomKey = state.roomKey; const idx = state.events.findIndex(e => e.id === eventObj.id); if (idx >= 0) state.events[idx] = eventObj; else state.events.push(eventObj); saveDevicePrefs(); renderAll(); await pushFullStateToSupabase(); }  async function removeEventFromCloud(eventId) { state.events = state.events.filter(e => e.id !== eventId); saveDevicePrefs(); renderAll(); await pushFullStateToSupabase(); }  async function saveTaskToCloud(taskObj) { taskObj.roomKey = state.roomKey; const idx = state.tasks.findIndex(t => t.id === taskObj.id); if (idx >= 0) state.tasks[idx] = taskObj; else state.tasks.push(taskObj); saveDevicePrefs(); renderAll(); await pushFullStateToSupabase(); }  async function removeTaskFromCloud(taskId) { state.tasks = state.tasks.filter(t => t.id !== taskId); saveDevicePrefs(); renderAll(); await pushFullStateToSupabase(); }  async function saveShoppingToCloud(itemObj) { itemObj.roomKey = state.roomKey; const idx = state.shopping.findIndex(s => s.id === itemObj.id); if (idx >= 0) state.shopping[idx] = itemObj; else state.shopping.push(itemObj); saveDevicePrefs(); renderAll(); await pushFullStateToSupabase(); }  async function removeShoppingFromCloud(itemId) { state.shopping = state.shopping.filter(s => s.id !== itemId); saveDevicePrefs(); renderAll(); await pushFullStateToSupabase(); }  // ---------------- UI RENDERING ---------------- // Person Categories: Quinn (Green), Amy (Blue), Tom (Red), Other (Yellow) const categoryMeta = { quinn: { label: 'Quinn', dot: 'bg-emerald-500', badge: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30', bar: 'bg-emerald-500' }, amy: { label: 'Amy', dot: 'bg-sky-500', badge: 'bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30', bar: 'bg-sky-500' }, tom: { label: 'Tom', dot: 'bg-rose-500', badge: 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30', bar: 'bg-rose-500' }, other: { label: 'Other', dot: 'bg-amber-400', badge: 'bg-amber-400/20 text-amber-800 dark:text-amber-300 border-amber-400/40', bar: 'bg-amber-400' } };  function renderAll() { // Apply theme document.documentElement.classList.toggle('dark', state.darkMode);  // Keep dynamic category labels synced with custom partner names categoryMeta.amy.label = state.p1Name; categoryMeta.tom.label = state.p2Name;  // Lock screen check const lockScreen = document.getElementById('lockScreen'); if (!state.unlocked) { lockScreen.classList.remove('hidden'); return; } else { lockScreen.classList.add('hidden'); }  // Update Partner Name Labels Everywhere (P1 = Amy Blue, P2 = Tom Red/Rose) document.querySelectorAll('.p1-name-label, .lock-p1-name').forEach(el => el.textContent = state.p1Name); document.querySelectorAll('.p2-name-label, .lock-p2-name').forEach(el => el.textContent = state.p2Name);  // Active Partner Switcher Highlight const btnP1 = document.getElementById('headerBtnP1'); const btnP2 = document.getElementById('headerBtnP2'); const viewerBadge = document.getElementById('activeViewerBadge'); const partnerTabLabel = document.getElementById('partnerTabLabel');  if (state.activePartner === 'p1') { btnP1.className = 'px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm'; btnP2.className = 'px-2.5 py-1 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 text-slate-500 dark:text-slate-400'; viewerBadge.textContent = state.p1Name; viewerBadge.className = 'font-bold text-sky-600 dark:text-sky-400'; partnerTabLabel.textContent = `${state.p2Name}'s`;
+                    { event: '*', schema: 'public', table: 'homestead_data', filter: `id=eq.${rowId}` },
+                    (payload) => {
+                        if (payload.new && payload.new.payload) {
+                            applyIncomingCloudPayload(payload.new.payload, true);
+                        }
+                    }
+                )
+                .subscribe();
+        }
+
+        function applyIncomingCloudPayload(cloudPayload, showNotifications) {
+            const incomingEvents = Array.isArray(cloudPayload.events) ? cloudPayload.events : [];
+            const incomingTasks = Array.isArray(cloudPayload.tasks) ? cloudPayload.tasks : [];
+            const incomingShopping = Array.isArray(cloudPayload.shopping) ? cloudPayload.shopping : [];
+
+            if (showNotifications && state.initialLoadComplete) {
+                if (incomingEvents.length > state.events.length) {
+                    const newest = [...incomingEvents].sort((a,b) => (b.createdAt||0) - (a.createdAt||0))[0];
+                    if (newest && newest.createdBy !== state.activePartner) {
+                        const creatorName = newest.createdBy === 'p1' ? state.p1Name : state.p2Name;
+                        showToast(`📅 ${creatorName} added "${newest.title}"`);
+                    }
+                }
+                if (incomingTasks.length > state.tasks.length) {
+                    const newest = [...incomingTasks].sort((a,b) => (b.createdAt||0) - (a.createdAt||0))[0];
+                    if (newest && newest.createdBy !== state.activePartner) {
+                        const creatorName = newest.createdBy === 'p1' ? state.p1Name : state.p2Name;
+                        if (newest.assignedTo === state.activePartner || newest.assignedTo === 'both') {
+                            showToast(`🔔 ${creatorName} assigned you: "${newest.title}"`);
+                        }
+                    }
+                }
+            }
+
+            state.events = incomingEvents;
+            state.tasks = incomingTasks;
+            state.shopping = incomingShopping;
+            saveDevicePrefs();
+            renderAll();
+        }
+
+        async function pushFullStateToSupabase() {
+            if (!supabaseClient || !state.unlocked) return;
+            const rowId = state.roomKey || 'homestead-amy-tom';
+            try {
+                await supabaseClient
+                    .from('homestead_data')
+                    .upsert({
+                        id: rowId,
+                        payload: {
+                            events: state.events,
+                            tasks: state.tasks,
+                            shopping: state.shopping
+                        },
+                        updated_at: new Date().toISOString()
+                    });
+            } catch (e) {
+                console.error('Supabase sync error:', e);
+            }
+        }
+
+        // Background 4-second poll so both phones stay synced automatically
+        setInterval(async () => {
+            if (!supabaseClient || !state.unlocked || state.animatingShoppingIds.size > 0) return;
+            const rowId = state.roomKey || 'homestead-amy-tom';
+            try {
+                const { data } = await supabaseClient
+                    .from('homestead_data')
+                    .select('payload')
+                    .eq('id', rowId)
+                    .maybeSingle();
+                if (data && data.payload) {
+                    const currentJson = JSON.stringify({ events: state.events, tasks: state.tasks, shopping: state.shopping });
+                    const remoteJson = JSON.stringify({
+                        events: data.payload.events || [],
+                        tasks: data.payload.tasks || [],
+                        shopping: data.payload.shopping || []
+                    });
+                    if (currentJson !== remoteJson) {
+                        applyIncomingCloudPayload(data.payload, true);
+                    }
+                }
+            } catch (e) {}
+        }, 4000);
+
+        async function saveEventToCloud(eventObj) {
+            eventObj.roomKey = state.roomKey;
+            const idx = state.events.findIndex(e => e.id === eventObj.id);
+            if (idx >= 0) state.events[idx] = eventObj;
+            else state.events.push(eventObj);
+            saveDevicePrefs();
+            renderAll();
+            await pushFullStateToSupabase();
+        }
+
+        async function removeEventFromCloud(eventId) {
+            state.events = state.events.filter(e => e.id !== eventId);
+            saveDevicePrefs();
+            renderAll();
+            await pushFullStateToSupabase();
+        }
+
+        async function saveTaskToCloud(taskObj) {
+            taskObj.roomKey = state.roomKey;
+            const idx = state.tasks.findIndex(t => t.id === taskObj.id);
+            if (idx >= 0) state.tasks[idx] = taskObj;
+            else state.tasks.push(taskObj);
+            saveDevicePrefs();
+            renderAll();
+            await pushFullStateToSupabase();
+        }
+
+        async function removeTaskFromCloud(taskId) {
+            state.tasks = state.tasks.filter(t => t.id !== taskId);
+            saveDevicePrefs();
+            renderAll();
+            await pushFullStateToSupabase();
+        }
+
+        async function saveShoppingToCloud(itemObj) {
+            itemObj.roomKey = state.roomKey;
+            const idx = state.shopping.findIndex(s => s.id === itemObj.id);
+            if (idx >= 0) state.shopping[idx] = itemObj;
+            else state.shopping.push(itemObj);
+            saveDevicePrefs();
+            renderAll();
+            await pushFullStateToSupabase();
+        }
+
+        async function removeShoppingFromCloud(itemId) {
+            state.shopping = state.shopping.filter(s => s.id !== itemId);
+            saveDevicePrefs();
+            renderAll();
+            await pushFullStateToSupabase();
+        }
+
+        // ---------------- UI RENDERING ----------------
+        // Person Categories: Quinn (Green), Amy (Blue), Tom (Red), Other (Yellow)
+        const categoryMeta = {
+            quinn: {
+                label: 'Quinn',
+                dot: 'bg-emerald-500',
+                badge: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30',
+                bar: 'bg-emerald-500'
+            },
+            amy: {
+                label: 'Amy',
+                dot: 'bg-sky-500',
+                badge: 'bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30',
+                bar: 'bg-sky-500'
+            },
+            tom: {
+                label: 'Tom',
+                dot: 'bg-rose-500',
+                badge: 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30',
+                bar: 'bg-rose-500'
+            },
+            other: {
+                label: 'Other',
+                dot: 'bg-amber-400',
+                badge: 'bg-amber-400/20 text-amber-800 dark:text-amber-300 border-amber-400/40',
+                bar: 'bg-amber-400'
+            }
+        };
+
+        function renderAll() {
+            // Apply theme
+            document.documentElement.classList.toggle('dark', state.darkMode);
+
+            // Keep dynamic category labels synced with custom partner names
+            categoryMeta.amy.label = state.p1Name;
+            categoryMeta.tom.label = state.p2Name;
+
+            // Lock screen check
+            const lockScreen = document.getElementById('lockScreen');
+            if (!state.unlocked) {
+                lockScreen.classList.remove('hidden');
+                return;
+            } else {
+                lockScreen.classList.add('hidden');
+            }
+
+            // Update Partner Name Labels Everywhere (P1 = Amy Blue, P2 = Tom Red/Rose)
+            document.querySelectorAll('.p1-name-label, .lock-p1-name').forEach(el => el.textContent = state.p1Name);
+            document.querySelectorAll('.p2-name-label, .lock-p2-name').forEach(el => el.textContent = state.p2Name);
+
+            // Active Partner Switcher Highlight
+            const btnP1 = document.getElementById('headerBtnP1');
+            const btnP2 = document.getElementById('headerBtnP2');
+            const viewerBadge = document.getElementById('activeViewerBadge');
+            const partnerTabLabel = document.getElementById('partnerTabLabel');
+
+            if (state.activePartner === 'p1') {
+                btnP1.className = 'px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm';
+                btnP2.className = 'px-2.5 py-1 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 text-slate-500 dark:text-slate-400';
+                viewerBadge.textContent = state.p1Name;
+                viewerBadge.className = 'font-bold text-sky-600 dark:text-sky-400';
+                partnerTabLabel.textContent = `${state.p2Name}'s`;
             } else {
                 btnP2.className = 'px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 bg-white dark:bg-slate-900 text-rose-600 dark:text-rose-400 shadow-sm';
                 btnP1.className = 'px-2.5 py-1 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 text-slate-500 dark:text-slate-400';
                 viewerBadge.textContent = state.p2Name;
                 viewerBadge.className = 'font-bold text-rose-600 dark:text-rose-400';
-                partnerTabLabel.textContent = `${state.p1Name}'s`; }  // Update Quick Task Input Placeholder & Pill const quickAssigneeBtn = document.getElementById('quickAssigneeCycleBtn'); const assigneeLabel = state.quickAssignee === 'p1' ? state.p1Name : (state.quickAssignee === 'p2' ? state.p2Name : 'Both'); quickAssigneeBtn.textContent = `To: ${assigneeLabel}`;
-            document.getElementById('quickTaskTitle').placeholder = `Quick task for ${assigneeLabel}...`;  renderEventsList(); renderTasksList(); renderShoppingList(); updateCountsAndBadges(); lucide.createIcons(); }  function updateCountsAndBadges() { const todayStr = getLocalDateString(0); const upcomingEvents = state.events.filter(e => e.date >= todayStr);  const myTasks = state.tasks.filter(t => !t.completed && (t.assignedTo === state.activePartner \vert{}\vert{} t.assignedTo === 'both')); const partnerCode = state.activePartner === 'p1' ? 'p2' : 'p1'; const partnerTasks = state.tasks.filter(t => !t.completed && (t.assignedTo === partnerCode \vert{}\vert{} t.assignedTo === 'both')); const activeShopping = state.shopping.filter(s => !s.completed);  document.getElementById('quickSummaryStats').textContent = `${upcomingEvents.length} events · ${myTasks.length} tasks · ${activeShopping.length} shopping`;
+                partnerTabLabel.textContent = `${state.p1Name}'s`;
+            }
+
+            // Update Quick Task Input Placeholder & Pill
+            const quickAssigneeBtn = document.getElementById('quickAssigneeCycleBtn');
+            const assigneeLabel = state.quickAssignee === 'p1' ? state.p1Name : (state.quickAssignee === 'p2' ? state.p2Name : 'Both');
+            quickAssigneeBtn.textContent = `To: ${assigneeLabel}`;
+            document.getElementById('quickTaskTitle').placeholder = `Quick task for ${assigneeLabel}...`;
+
+            renderEventsList();
+            renderTasksList();
+            renderShoppingList();
+            updateCountsAndBadges();
+            if (window.lucide) {
+                window.lucide.createIcons();
+            }
+        }
+
+        function updateCountsAndBadges() {
+            const todayStr = getLocalDateString(0);
+            const upcomingEvents = state.events.filter(e => e.date >= todayStr);
+
+            const myTasks = state.tasks.filter(t => !t.completed && (t.assignedTo === state.activePartner || t.assignedTo === 'both'));
+            const partnerCode = state.activePartner === 'p1' ? 'p2' : 'p1';
+            const partnerTasks = state.tasks.filter(t => !t.completed && (t.assignedTo === partnerCode || t.assignedTo === 'both'));
+            const activeShopping = state.shopping.filter(s => !s.completed);
+
+            document.getElementById('quickSummaryStats').textContent = `${upcomingEvents.length} events · ${myTasks.length} tasks · ${activeShopping.length} shopping`;
             document.getElementById('badgeMineCount').textContent = myTasks.length;
             document.getElementById('badgePartnerCount').textContent = partnerTasks.length;
 
@@ -1134,7 +1371,8 @@
                     <div onclick="openEditTask('${tk.id}')" class="flex-1 min-w-0 cursor-pointer">
                         <div class="flex flex-wrap items-center gap-1.5 mb-1">
                             ${assigneeBadge}
-                            ${catBadge}${dueStr ? `<span class="text-[10px] font-semibold text-slate-400 ml-auto">Due: ${dueStr}</span>` : ''}
+                            ${catBadge}
+                            ${dueStr ? `<span class="text-[10px] font-semibold text-slate-400 ml-auto">Due: ${dueStr}</span>` : ''}
                         </div>
 
                         <h3 class="font-bold text-sm sm:text-base ${tk.completed ? 'line-through text-slate-400 dark:text-slate-500' : 'text-slate-900 dark:text-white'} leading-snug break-words">
@@ -1237,4 +1475,542 @@
                     ${state.checkedShoppingExpanded ? `
                         <div class="mt-2.5 space-y-2 opacity-70">
                             ${completedItems.map(item => `
-                                <div class="bg-slate-100 dark:bg-slate-800/50 rounded-xl px-3.5 py-2.5 flex items-
+                                <div class="bg-slate-100 dark:bg-slate-800/50 rounded-xl px-3.5 py-2.5 flex items-center justify-between gap-3 border border-slate-200/60 dark:border-slate-800">
+                                    <button onclick="restoreShoppingItem('${item.id}')" class="flex items-center gap-2.5 flex-1 text-left">
+                                        <span class="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center">
+                                            <i data-lucide="check" class="w-3 h-3 stroke-[3]"></i>
+                                        </span>
+                                        <span class="text-sm font-medium line-through text-slate-500 dark:text-slate-400">${escapeHtml(item.title)}</span>
+                                    </button>
+                                    <button onclick="restoreShoppingItem('${item.id}')" class="text-[11px] font-bold text-sky-600 dark:text-sky-400 hover:underline">
+                                        Put Back
+                                    </button>
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                `;
+            } else {
+                drawer.classList.add('hidden');
+                drawer.innerHTML = '';
+            }
+        }
+
+        // ---------------- HELPERS & FORMATTERS ----------------
+        function getRelativeDayLabel(dateStr) {
+            const todayStr = getLocalDateString(0);
+            const tomorrowStr = getLocalDateString(1);
+            if (dateStr === todayStr) return 'Today';
+            if (dateStr === tomorrowStr) return 'Tomorrow';
+
+            const d1 = new Date(todayStr + 'T00:00:00');
+            const d2 = new Date(dateStr + 'T00:00:00');
+            const diffDays = Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
+
+            if (diffDays > 1 && diffDays <= 14) return `In ${diffDays} days`;
+            if (diffDays < 0) return `${Math.abs(diffDays)}d ago`;
+            return d2.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        }
+
+        function formatTime12Hr(timeStr) {
+            if (!timeStr) return '';
+            const [h, m] = timeStr.split(':').map(Number);
+            const suffix = h >= 12 ? 'PM' : 'AM';
+            const hr12 = h % 12 || 12;
+            return `${hr12}:${String(m).padStart(2, '0')} ${suffix}`;
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function showToast(message) {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-4 py-3 rounded-2xl shadow-xl text-xs font-bold flex items-center justify-between gap-2 animate-fade-in border border-slate-700/50';
+            toast.innerHTML = `<span>${escapeHtml(message)}</span>`;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transition = 'opacity 0.25s ease';
+                setTimeout(() => toast.remove(), 250);
+            }, 2800);
+        }
+
+        // ---------------- INTERACTION HANDLERS (EXPOSED TO WINDOW) ----------------
+        window.switchMainTab = function(tab) {
+            state.mainTab = tab;
+            const evView = document.getElementById('eventsView');
+            const tkView = document.getElementById('tasksView');
+            const shView = document.getElementById('shoppingView');
+            const navEv = document.getElementById('navBtnEvents');
+            const navTk = document.getElementById('navBtnTasks');
+            const navSh = document.getElementById('navBtnShopping');
+            const fabBtn = document.getElementById('mainFabBtn');
+
+            evView.classList.add('hidden');
+            tkView.classList.add('hidden');
+            shView.classList.add('hidden');
+
+            const inactiveNavClass = 'flex flex-col items-center justify-center py-1.5 rounded-2xl text-slate-400 dark:text-slate-500 font-semibold transition';
+            navEv.className = inactiveNavClass;
+            navTk.className = inactiveNavClass;
+            navSh.className = inactiveNavClass;
+
+            if (tab === 'events') {
+                evView.classList.remove('hidden');
+                navEv.className = 'flex flex-col items-center justify-center py-1.5 rounded-2xl text-sky-600 dark:text-sky-400 font-bold transition';
+                fabBtn.classList.remove('hidden');
+            } else if (tab === 'tasks') {
+                tkView.classList.remove('hidden');
+                navTk.className = 'flex flex-col items-center justify-center py-1.5 rounded-2xl text-sky-600 dark:text-sky-400 font-bold transition';
+                fabBtn.classList.remove('hidden');
+            } else if (tab === 'shopping') {
+                shView.classList.remove('hidden');
+                navSh.className = 'flex flex-col items-center justify-center py-1.5 rounded-2xl text-emerald-600 dark:text-emerald-400 font-bold transition';
+                // Hide floating + button on Shopping tab so the focus is 100% on the fast inline shopping bar
+                fabBtn.classList.add('hidden');
+            }
+        };
+
+        window.setActivePartner = function(partnerCode) {
+            state.activePartner = partnerCode;
+            saveDevicePrefs();
+            renderAll();
+            const name = partnerCode === 'p1' ? state.p1Name : state.p2Name;
+            showToast(`👋 Viewing Homestead as ${name}`);
+        };
+
+        window.setEventCategoryFilter = function(cat) {
+            state.eventCatFilter = cat;
+            document.querySelectorAll('.event-cat-btn').forEach(btn => {
+                if (btn.dataset.cat === cat) {
+                    btn.className = 'event-cat-btn shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-sm flex items-center gap-1.5 transition';
+                } else {
+                    btn.className = 'event-cat-btn shrink-0 px-3 py-1.5 rounded-full text-xs font-bold bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition';
+                }
+            });
+            renderEventsList();
+            if (window.lucide) window.lucide.createIcons();
+        };
+
+        window.togglePastEvents = function() {
+            state.pastEventsExpanded = !state.pastEventsExpanded;
+            renderEventsList();
+            if (window.lucide) window.lucide.createIcons();
+        };
+
+        window.setTaskFilter = function(filter) {
+            state.taskFilter = filter;
+            renderTasksList();
+            if (window.lucide) window.lucide.createIcons();
+        };
+
+        window.cycleQuickAssignee = function() {
+            const order = ['both', 'p1', 'p2'];
+            const nextIdx = (order.indexOf(state.quickAssignee) + 1) % order.length;
+            state.quickAssignee = order[nextIdx];
+            renderAll();
+        };
+
+        // Quick inline task submit
+        document.getElementById('quickTaskForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const input = document.getElementById('quickTaskTitle');
+            const title = input.value.trim();
+            if (!title) return;
+
+            const defaultCat = state.quickAssignee === 'p1' ? 'amy' : (state.quickAssignee === 'p2' ? 'tom' : 'other');
+
+            const newTask = {
+                id: 'tk-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+                roomKey: state.roomKey,
+                title,
+                assignedTo: state.quickAssignee,
+                category: defaultCat,
+                dueDate: getLocalDateString(0),
+                notes: '',
+                completed: false,
+                createdBy: state.activePartner,
+                createdAt: Date.now()
+            };
+
+            input.value = '';
+            saveTaskToCloud(newTask);
+            const targetName = state.quickAssignee === 'p1' ? state.p1Name : (state.quickAssignee === 'p2' ? state.p2Name : 'Both');
+            showToast(`✅ Task assigned to ${targetName}`);
+        });
+
+        window.toggleTaskComplete = function(taskId) {
+            const tk = state.tasks.find(t => t.id === taskId);
+            if (!tk) return;
+            tk.completed = !tk.completed;
+            saveTaskToCloud(tk);
+            if (tk.completed) {
+                showToast(`🎉 Marked "${tk.title}" complete!`);
+            }
+        };
+
+        // ---------------- SHOPPING LIST HANDLERS ----------------
+        document.getElementById('shoppingQuickForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const input = document.getElementById('shoppingItemInput');
+            const title = input.value.trim();
+            if (!title) return;
+
+            const newItem = {
+                id: 'sh-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+                roomKey: state.roomKey,
+                title,
+                completed: false,
+                createdBy: state.activePartner,
+                createdAt: Date.now()
+            };
+
+            input.value = '';
+            saveShoppingToCloud(newItem);
+        });
+
+        window.checkOffShoppingItem = function(itemId) {
+            if (state.animatingShoppingIds.has(itemId)) return;
+            const item = state.shopping.find(s => s.id === itemId);
+            if (!item || item.completed) return;
+
+            // Trigger satisfying visual pop + slide-out animation first
+            state.animatingShoppingIds.add(itemId);
+            renderShoppingList();
+            if (window.lucide) window.lucide.createIcons();
+
+            setTimeout(() => {
+                state.animatingShoppingIds.delete(itemId);
+                item.completed = true;
+                item.completedAt = Date.now();
+                saveShoppingToCloud(item);
+            }, 820);
+        };
+
+        window.restoreShoppingItem = function(itemId) {
+            const item = state.shopping.find(s => s.id === itemId);
+            if (!item) return;
+            item.completed = false;
+            item.createdAt = Date.now();
+            saveShoppingToCloud(item);
+        };
+
+        window.deleteShoppingItem = function(itemId) {
+            removeShoppingFromCloud(itemId);
+        };
+
+        window.toggleCheckedShoppingDrawer = function() {
+            state.checkedShoppingExpanded = !state.checkedShoppingExpanded;
+            renderShoppingList();
+            if (window.lucide) window.lucide.createIcons();
+        };
+
+        window.clearCompletedShopping = function() {
+            const completed = state.shopping.filter(s => s.completed);
+            completed.forEach(item => removeShoppingFromCloud(item.id));
+            showToast('🧹 Cleared checked items');
+        };
+
+        // ---------------- COMPOSER MODAL (ADD / EDIT) ----------------
+        window.openComposerModal = function() {
+            document.getElementById('eventEditId').value = '';
+            document.getElementById('taskEditId').value = '';
+            document.getElementById('eventForm').reset();
+            document.getElementById('taskForm').reset();
+            document.getElementById('eventDate').value = getLocalDateString(0);
+            document.getElementById('deleteEventBtn').classList.add('hidden');
+            document.getElementById('deleteTaskBtn').classList.add('hidden');
+
+            setComposerType(state.mainTab === 'tasks' ? 'task' : 'event');
+            selectEventCat('quinn');
+            selectTaskAssignee('both');
+
+            document.getElementById('composerModal').classList.remove('hidden');
+        };
+
+        window.closeComposerModal = function() {
+            document.getElementById('composerModal').classList.add('hidden');
+        };
+
+        window.setComposerType = function(type) {
+            state.composerType = type;
+            const btnEv = document.getElementById('composerTypeEvent');
+            const btnTk = document.getElementById('composerTypeTask');
+            const formEv = document.getElementById('eventForm');
+            const formTk = document.getElementById('taskForm');
+
+            if (type === 'event') {
+                btnEv.className = 'px-3.5 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm transition';
+                btnTk.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-500 transition';
+                formEv.classList.remove('hidden');
+                formTk.classList.add('hidden');
+            } else {
+                btnTk.className = 'px-3.5 py-1.5 rounded-lg text-xs font-bold bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm transition';
+                btnEv.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-500 transition';
+                formTk.classList.remove('hidden');
+                formEv.classList.add('hidden');
+            }
+        };
+
+        window.selectEventCat = function(cat) {
+            state.selectedEventCat = cat;
+            const activeStyles = {
+                quinn: 'border-2 border-emerald-500 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
+                amy: 'border-2 border-sky-500 bg-sky-500/15 text-sky-700 dark:text-sky-300',
+                tom: 'border-2 border-rose-500 bg-rose-500/15 text-rose-700 dark:text-rose-300',
+                other: 'border-2 border-amber-400 bg-amber-400/20 text-amber-800 dark:text-amber-300'
+            };
+
+            document.querySelectorAll('.ev-cat-option').forEach(btn => {
+                const c = btn.dataset.evcat;
+                if (c === cat) {
+                    btn.className = `ev-cat-option py-2.5 px-3 rounded-xl text-xs font-bold flex items-center gap-2 transition ${activeStyles[c]}`;
+                } else {
+                    btn.className = 'ev-cat-option py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 text-xs font-semibold flex items-center gap-2 transition';
+                }
+            });
+        };
+
+        window.selectTaskAssignee = function(target) {
+            state.selectedTaskAssignee = target;
+            const p1 = document.getElementById('assignPillP1');
+            const p2 = document.getElementById('assignPillP2');
+            const both = document.getElementById('assignPillBoth');
+
+            const baseClass = 'py-3 px-3 rounded-2xl border-2 font-bold text-xs flex flex-col items-center gap-1 transition ';
+            p1.className = baseClass + (target === 'p1' ? 'border-sky-500 bg-sky-500/15 text-sky-600 dark:text-sky-300' : 'border-slate-200 dark:border-slate-700 text-slate-500');
+            p2.className = baseClass + (target === 'p2' ? 'border-rose-500 bg-rose-500/15 text-rose-600 dark:text-rose-300' : 'border-slate-200 dark:border-slate-700 text-slate-500');
+            both.className = baseClass + (target === 'both' ? 'border-indigo-500 bg-indigo-500/15 text-indigo-600 dark:text-indigo-300' : 'border-slate-200 dark:border-slate-700 text-slate-500');
+        };
+
+        window.openEditEvent = function(eventId) {
+            const ev = state.events.find(e => e.id === eventId);
+            if (!ev) return;
+            openComposerModal();
+            setComposerType('event');
+            document.getElementById('eventEditId').value = ev.id;
+            document.getElementById('eventTitle').value = ev.title;
+            document.getElementById('eventDate').value = ev.date;
+            document.getElementById('eventTime').value = ev.time || '';
+            document.getElementById('eventNotes').value = ev.notes || '';
+            selectEventCat(ev.category || 'other');
+            document.getElementById('deleteEventBtn').classList.remove('hidden');
+        };
+
+        window.openEditTask = function(taskId) {
+            const tk = state.tasks.find(t => t.id === taskId);
+            if (!tk) return;
+            openComposerModal();
+            setComposerType('task');
+            document.getElementById('taskEditId').value = tk.id;
+            document.getElementById('taskTitle').value = tk.title;
+            document.getElementById('taskDueDate').value = tk.dueDate || '';
+            document.getElementById('taskCategory').value = tk.category || 'other';
+            document.getElementById('taskNotes').value = tk.notes || '';
+            selectTaskAssignee(tk.assignedTo || 'both');
+            document.getElementById('deleteTaskBtn').classList.remove('hidden');
+        };
+
+        // Handle Event Form Submit
+        document.getElementById('eventForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const editId = document.getElementById('eventEditId').value;
+            const eventObj = {
+                id: editId || ('ev-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6)),
+                roomKey: state.roomKey,
+                title: document.getElementById('eventTitle').value.trim(),
+                date: document.getElementById('eventDate').value,
+                time: document.getElementById('eventTime').value,
+                category: state.selectedEventCat,
+                notes: document.getElementById('eventNotes').value.trim(),
+                createdBy: state.activePartner,
+                createdAt: Date.now()
+            };
+            saveEventToCloud(eventObj);
+            closeComposerModal();
+            switchMainTab('events');
+            showToast('📅 Event saved to Calendar!');
+        });
+
+        // Handle Task Form Submit
+        document.getElementById('taskForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const editId = document.getElementById('taskEditId').value;
+            const existing = state.tasks.find(t => t.id === editId);
+            const taskObj = {
+                id: editId || ('tk-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6)),
+                roomKey: state.roomKey,
+                title: document.getElementById('taskTitle').value.trim(),
+                assignedTo: state.selectedTaskAssignee,
+                category: document.getElementById('taskCategory').value,
+                dueDate: document.getElementById('taskDueDate').value,
+                notes: document.getElementById('taskNotes').value.trim(),
+                completed: existing ? existing.completed : false,
+                createdBy: state.activePartner,
+                createdAt: existing ? existing.createdAt : Date.now()
+            };
+            saveTaskToCloud(taskObj);
+            closeComposerModal();
+            switchMainTab('tasks');
+            const targetName = state.selectedTaskAssignee === 'p1' ? state.p1Name : (state.selectedTaskAssignee === 'p2' ? state.p2Name : 'Both');
+            showToast(`✅ Task saved for ${targetName}!`);
+        });
+
+        window.deleteCurrentEvent = function() {
+            const id = document.getElementById('eventEditId').value;
+            if (id) {
+                removeEventFromCloud(id);
+                closeComposerModal();
+                showToast('🗑️ Event removed');
+            }
+        };
+
+        window.deleteCurrentTask = function() {
+            const id = document.getElementById('taskEditId').value;
+            if (id) {
+                removeTaskFromCloud(id);
+                closeComposerModal();
+                showToast('🗑️ Task removed');
+            }
+        };
+
+        // ---------------- SETTINGS & LOCK SCREEN ----------------
+        window.openSettingsModal = function() {
+            document.getElementById('settingsP1Name').value = state.p1Name;
+            document.getElementById('settingsP2Name').value = state.p2Name;
+            document.getElementById('settingsRoomKey').value = state.roomKey;
+            document.getElementById('customFirebaseJson').value = localStorage.getItem('homestead_custom_fb') || '';
+            document.getElementById('settingsModal').classList.remove('hidden');
+        };
+
+        window.closeSettingsModal = function() {
+            document.getElementById('settingsModal').classList.add('hidden');
+        };
+
+        window.saveSettings = function() {
+            const p1 = document.getElementById('settingsP1Name').value.trim() || 'Amy';
+            const p2 = document.getElementById('settingsP2Name').value.trim() || 'Tom';
+            const newKey = document.getElementById('settingsRoomKey').value.trim().toLowerCase() || 'homestead-amy-tom';
+            const customFb = document.getElementById('customFirebaseJson').value.trim();
+
+            const keyChanged = newKey !== state.roomKey;
+            state.p1Name = p1;
+            state.p2Name = p2;
+            state.roomKey = newKey;
+
+            if (customFb) {
+                localStorage.setItem('homestead_custom_fb', customFb);
+            } else {
+                localStorage.removeItem('homestead_custom_fb');
+            }
+
+            saveDevicePrefs();
+            closeSettingsModal();
+            if (keyChanged && db && currentUser) {
+                subscribeToHouseholdData();
+            }
+            renderAll();
+            showToast('⚙️ Homestead settings saved!');
+        };
+
+        window.toggleDarkMode = function() {
+            state.darkMode = !state.darkMode;
+            saveDevicePrefs();
+            renderAll();
+        };
+
+        window.lockHouseholdNow = function() {
+            state.unlocked = false;
+            if (realtimeChannel && supabaseClient) {
+                supabaseClient.removeChannel(realtimeChannel);
+                realtimeChannel = null;
+            }
+            saveDevicePrefs();
+            closeSettingsModal();
+            renderAll();
+        };
+
+        window.selectLockProfile = function(partnerCode) {
+            state.activePartner = partnerCode;
+            const b1 = document.getElementById('lockSelectP1');
+            const b2 = document.getElementById('lockSelectP2');
+            if (partnerCode === 'p1') {
+                b1.className = 'py-3 px-4 rounded-xl border-2 border-sky-500 bg-sky-500/20 text-white font-semibold flex items-center justify-center gap-2 transition';
+                b2.className = 'py-3 px-4 rounded-xl border-2 border-slate-700 bg-slate-900/50 text-slate-300 font-semibold flex items-center justify-center gap-2 transition';
+            } else {
+                b2.className = 'py-3 px-4 rounded-xl border-2 border-rose-500 bg-rose-500/20 text-white font-semibold flex items-center justify-center gap-2 transition';
+                b1.className = 'py-3 px-4 rounded-xl border-2 border-slate-700 bg-slate-900/50 text-slate-300 font-semibold flex items-center justify-center gap-2 transition';
+            }
+        };
+
+        document.getElementById('unlockForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const key = document.getElementById('roomKeyInput').value.trim().toLowerCase();
+            if (!key) return;
+            state.roomKey = key;
+            state.unlocked = true;
+            saveDevicePrefs();
+            renderAll();
+            initCloudSync();
+            showToast(`🔓 Homestead unlocked permanently on this device`);
+        });
+
+        // ---------------- INSTALL GUIDE & SINGLE-FILE DOWNLOAD ----------------
+        window.openInstallModal = function() {
+            document.getElementById('installModal').classList.remove('hidden');
+        };
+
+        window.closeInstallModal = function() {
+            document.getElementById('installModal').classList.add('hidden');
+        };
+
+        window.downloadStandaloneApp = async function() {
+            try {
+                const res = await fetch(window.location.href);
+                const rawHtml = await res.text();
+                const blob = new Blob([rawHtml], { type: 'text/html' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'index.html';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                showToast('📥 Downloaded clean index.html');
+            } catch (err) {
+                showToast('💡 Save directly from your code editor');
+            }
+        };
+
+        // Listen for cross-tab local storage sync
+        window.addEventListener('storage', (e) => {
+            if (e.key === 'homestead_prefs_v2') {
+                loadDevicePrefs();
+                renderAll();
+            }
+        });
+
+        // ---------------- INITIALIZE ON LOAD ----------------
+        function bootHomestead() {
+            loadDevicePrefs();
+            ensureStarterDataIfEmpty();
+            renderAll();
+            initCloudSync();
+        }
+
+        if (document.readyState === 'loading') {
+            window.addEventListener('DOMContentLoaded', bootHomestead);
+        } else {
+            bootHomestead();
+        }
+    </script>
+</body>
+</html>
